@@ -8,6 +8,7 @@
   const state = {
     userLat: 35.681236, // デフォルト: 東京駅
     userLng: 139.767125,
+    userAccuracy: 50,
     hasRealLocation: false,
     activeCategory: 'all', // 'all' | 'food' | 'play' | 'toilet'
     searchQuery: '',
@@ -15,7 +16,8 @@
     filteredSpots: [],
     selectedSpot: null,
     sheetState: 'half', // 'collapsed' | 'half' | 'expanded'
-    isLoading: false
+    isLoading: false,
+    lastSearchedCenter: null
   };
 
   let mapController = null;
@@ -30,8 +32,10 @@
     searchInput: document.getElementById('searchInput'),
     clearSearchBtn: document.getElementById('clearSearchBtn'),
     currentLocationBtn: document.getElementById('currentLocationBtn'),
+    searchAreaBtn: document.getElementById('searchAreaBtn'),
     sheetToggleBtn: document.getElementById('sheetToggleBtn'),
     loadingIndicator: document.getElementById('loadingIndicator'),
+    toastWrapper: document.getElementById('toastWrapper'),
     statusMessage: document.getElementById('statusMessage'),
     spotModal: document.getElementById('spotModal'),
     modalBackdrop: document.getElementById('modalBackdrop'),
@@ -46,23 +50,35 @@
     initEventListeners();
     initServiceWorker();
 
-    // 起動時に初期プリセットデータを読み込み、現在地取得を促す
+    // 起動時の初期プリセットデータ設定
     updateSpotsWithDistance(state.userLat, state.userLng);
     filterAndRender();
 
-    // 現在地を自動取得（許可があれば即更新）
+    // 起動時に現在地取得を開始
     requestCurrentLocation(false);
   });
 
   function initMap() {
     mapController = new MapController('map');
     mapController.init(state.userLat, state.userLng, 15);
-    mapController.setUserLocation(state.userLat, state.userLng);
+    mapController.setUserLocation(state.userLat, state.userLng, state.userAccuracy);
 
     // ピンタップ時のコールバック
     mapController.onSpotSelect((spot) => {
       if (spot) {
         openSpotDetail(spot);
+      }
+    });
+
+    // 地図移動時に「このエリアで再検索」を表示
+    mapController.onMapMove((lat, lng) => {
+      if (state.lastSearchedCenter) {
+        const dist = window.calculateDistanceKm(state.lastSearchedCenter.lat, state.lastSearchedCenter.lng, lat, lng);
+        if (dist > 0.4) {
+          elements.searchAreaBtn.classList.remove('hidden');
+        }
+      } else {
+        elements.searchAreaBtn.classList.remove('hidden');
       }
     });
   }
@@ -107,6 +123,17 @@
       requestCurrentLocation(true);
     });
 
+    // このエリアで再検索ボタン
+    elements.searchAreaBtn.addEventListener('click', () => {
+      elements.searchAreaBtn.classList.add('hidden');
+      const center = mapController.getCenter();
+      state.userLat = center.lat;
+      state.userLng = center.lng;
+      state.lastSearchedCenter = center;
+      mapController.setUserLocation(center.lat, center.lng, 100);
+      fetchNearbySpots(center.lat, center.lng);
+    });
+
     // ボトムシートヘッダーのタップ（展開/折りたたみ切り替え）
     elements.sheetToggleBtn.addEventListener('click', () => {
       toggleSheetState();
@@ -124,51 +151,79 @@
     });
   }
 
-  // --- 現在地取得 ---
+  // --- 現在地取得（2段階高速化＆フォールバック） ---
   function requestCurrentLocation(isUserInitiated = false) {
     if (!navigator.geolocation) {
-      if (isUserInitiated) {
-        showStatus('お使いのブラウザは現在地取得に対応していません', 'error');
-      }
+      showStatus('お使いのブラウザは現在地取得に対応していません', 'error');
       return;
     }
 
     setLoading(true, '現在地を取得中...');
 
+    // 成功時共通ハンドラ
+    const handleLocationSuccess = (pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const accuracy = pos.coords.accuracy || 30;
+
+      state.userLat = lat;
+      state.userLng = lng;
+      state.userAccuracy = accuracy;
+      state.hasRealLocation = true;
+      state.lastSearchedCenter = { lat, lng };
+
+      mapController.setUserLocation(lat, lng, accuracy);
+      mapController.panTo(lat, lng, 16);
+      elements.searchAreaBtn.classList.add('hidden');
+
+      showStatus(`現在地を取得しました（誤差約±${Math.round(accuracy)}m）`, 'success');
+
+      // 周辺の車いす対応スポットを検索
+      fetchNearbySpots(lat, lng);
+    };
+
+    // まずは高速レスポンス（enableHighAccuracy: false）で大まかな位置を瞬時に取得
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        state.userLat = pos.coords.latitude;
-        state.userLng = pos.coords.longitude;
-        state.hasRealLocation = true;
+        handleLocationSuccess(pos);
 
-        mapController.setUserLocation(state.userLat, state.userLng);
-        mapController.panTo(state.userLat, state.userLng, 16);
-
-        showStatus('現在地を取得しました。周辺のスポットを探索中...', 'success');
-
-        // OSMから周辺スポットを取得
-        fetchNearbySpots(state.userLat, state.userLng);
+        // その後、バックグラウンドで高精度GPS情報を取得して位置を補正
+        navigator.geolocation.getCurrentPosition(
+          (highAccPos) => {
+            if (highAccPos.coords.accuracy < pos.coords.accuracy) {
+              handleLocationSuccess(highAccPos);
+            }
+          },
+          (highAccErr) => {
+            console.log('[GPS High Accuracy Note] Fallback kept:', highAccErr.message);
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
       },
       (err) => {
         setLoading(false);
         console.warn('[Geolocation error]', err);
-        if (isUserInitiated) {
-          let msg = '現在地を取得できませんでした。位置情報の利用を許可してください。';
-          if (err.code === 1) msg = '位置情報の利用が拒否されています。ブラウザの設定をご確認ください。';
-          showStatus(msg, 'warning');
+        let errorMsg = '現在地を取得できませんでした。';
+        if (err.code === 1) { // PERMISSION_DENIED
+          errorMsg = '位置情報の利用が許可されていません。ブラウザのアドレスバーから許可してください。';
+        } else if (err.code === 2) { // POSITION_UNAVAILABLE
+          errorMsg = '端末の位置情報を検出できませんでした。GPSが有効かご確認ください。';
+        } else if (err.code === 3) { // TIMEOUT
+          errorMsg = '位置情報の取得がタイムアウトしました。電波環境をご確認ください。';
         }
+        showStatus(errorMsg, 'warning');
       },
       {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000
+        enableHighAccuracy: false,
+        timeout: 8000,
+        maximumAge: 10000
       }
     );
   }
 
   // --- 周辺スポット取得と統合 ---
   async function fetchNearbySpots(lat, lng) {
-    setLoading(true, 'バリアフリースポットを検索中...');
+    setLoading(true, '周辺のバリアフリースポットを検索中...');
     try {
       const osmSpots = await window.osmService.fetchNearbyWheelchairSpots(lat, lng, 2000);
       
@@ -182,7 +237,7 @@
       console.error('[App] Spot fetch failed:', e);
       updateSpotsWithDistance(lat, lng);
       filterAndRender();
-      showStatus('オフライン用スポットデータを表示しています', 'info');
+      showStatus('周辺データ取得中。内蔵スポットを表示しています', 'info');
     } finally {
       setLoading(false);
     }
@@ -190,12 +245,22 @@
 
   // --- 距離計算とスポット更新 ---
   function updateSpotsWithDistance(userLat, userLng, additionalSpots = []) {
-    const all = [...window.PRESET_SPOTS, ...additionalSpots];
+    // OSMから取得できたスポット
+    const osmList = additionalSpots || [];
+
+    // プリセットスポット（現在地から50km以上離れている場合は除外して、現在地周辺のノイズを防ぐ）
+    const validPresets = window.PRESET_SPOTS.filter(spot => {
+      const dist = window.calculateDistanceKm(userLat, userLng, spot.lat, spot.lng);
+      spot.distance = dist;
+      // OSMデータが0件の場合はサンプルとしてすべて表示、ある場合は50km以内のみ
+      return osmList.length === 0 || dist < 50;
+    });
+
+    const all = [...osmList, ...validPresets];
     
     // 重複除去 (ID基準)
     const uniqueMap = new Map();
     all.forEach(spot => {
-      // 距離再計算
       spot.distance = window.calculateDistanceKm(userLat, userLng, spot.lat, spot.lng);
       uniqueMap.set(spot.id, spot);
     });
@@ -208,7 +273,6 @@
   function setCategory(cat) {
     state.activeCategory = cat;
 
-    // ボタンのスタイル更新
     const buttons = elements.categoryFilterGroup.querySelectorAll('button');
     buttons.forEach(btn => {
       const btnCat = btn.getAttribute('data-category');
@@ -226,12 +290,10 @@
   function filterAndRender() {
     let result = state.spots;
 
-    // カテゴリフィルター
     if (state.activeCategory !== 'all') {
       result = result.filter(s => s.category === state.activeCategory);
     }
 
-    // 検索語フィルター
     if (state.searchQuery) {
       const q = state.searchQuery;
       result = result.filter(s => 
@@ -243,16 +305,12 @@
     }
 
     state.filteredSpots = result;
-
-    // バッジ更新
     elements.spotCountBadge.textContent = `${result.length}件`;
 
-    // 地図のピン更新
     if (mapController) {
       mapController.renderSpots(result, state.selectedSpot ? state.selectedSpot.id : null);
     }
 
-    // リストの描画
     renderSpotList(result);
   }
 
@@ -265,8 +323,8 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
           </svg>
-          <p class="text-sm font-medium text-slate-600">該当するスポットが見つかりません</p>
-          <p class="text-xs text-slate-400 mt-1">検索条件を変更するか、地図の範囲を広げてください</p>
+          <p class="text-sm font-medium text-slate-600">周辺に該当スポットが見つかりません</p>
+          <p class="text-xs text-slate-400 mt-1">地図を移動して「このエリアで再検索」をお試しください</p>
         </div>
       `;
       return;
@@ -283,7 +341,6 @@
         tagBg = 'bg-purple-50 text-purple-700 border-purple-200';
       }
 
-      // バリアフリーバッジの生成
       const badges = [];
       if (spot.wheelchair === 'yes') {
         badges.push(`<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">車いすOK</span>`);
@@ -328,7 +385,6 @@
 
     elements.spotList.innerHTML = html;
 
-    // カードクリックで詳細表示と地図移動
     elements.spotList.querySelectorAll('.spot-card').forEach(card => {
       card.addEventListener('click', () => {
         const spotId = card.getAttribute('data-spot-id');
@@ -356,7 +412,6 @@
       catClass = 'bg-purple-100 text-purple-800';
     }
 
-    // Google Maps ルート案内リンク
     const googleMapUrl = `https://www.google.com/maps/dir/?api=1&destination=${spot.lat},${spot.lng}`;
 
     elements.modalContent.innerHTML = `
@@ -365,14 +420,13 @@
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2">
             <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${catClass}">${spot.categoryName}</span>
-            <span class="text-xs font-bold text-blue-600">現在地から約 ${window.formatDistance(spot.distance)}</span>
+            <span class="text-xs font-bold text-blue-600">約 ${window.formatDistance(spot.distance)}</span>
           </div>
           <h2 class="text-base font-bold text-slate-900 mt-1">${spot.name}</h2>
           ${spot.address ? `<p class="text-xs text-slate-500 mt-0.5">${spot.address}</p>` : ''}
         </div>
       </div>
 
-      <!-- バリアフリー設備ステータス -->
       <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-4 space-y-2.5">
         <h4 class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
           <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -400,7 +454,6 @@
         </div>
       </div>
 
-      <!-- 施設の説明・備考 -->
       ${spot.description ? `
         <div class="mb-4">
           <h4 class="text-xs font-semibold text-slate-600 mb-1">施設の特長・状況</h4>
@@ -408,7 +461,6 @@
         </div>
       ` : ''}
 
-      <!-- 営業時間・電話 -->
       ${spot.openingHours || spot.phone ? `
         <div class="mb-4 space-y-1.5 text-xs text-slate-600">
           ${spot.openingHours ? `<div class="flex items-center gap-2"><span class="font-medium text-slate-400">🕒 営業時間:</span> <span>${spot.openingHours}</span></div>` : ''}
@@ -416,7 +468,6 @@
         </div>
       ` : ''}
 
-      <!-- ナビゲーション・アクションボタン -->
       <div class="flex items-center gap-2.5 mt-5">
         <a href="${googleMapUrl}" target="_blank" rel="noopener noreferrer"
            class="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md transition active:scale-98 text-sm">
@@ -464,11 +515,10 @@
     state.isLoading = loading;
     if (loading) {
       elements.loadingIndicator.classList.remove('hidden');
-      elements.loadingIndicator.classList.add('flex');
       if (message) elements.statusMessage.textContent = message;
+      elements.toastWrapper.classList.remove('hidden');
     } else {
       elements.loadingIndicator.classList.add('hidden');
-      elements.loadingIndicator.classList.remove('flex');
     }
   }
 
@@ -476,11 +526,13 @@
   let toastTimer = null;
   function showStatus(msg, type = 'info') {
     elements.statusMessage.textContent = msg;
-    elements.statusMessage.parentElement.classList.remove('hidden');
+    elements.toastWrapper.classList.remove('hidden');
     
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
-      elements.statusMessage.parentElement.classList.add('hidden');
+      if (!state.isLoading) {
+        elements.toastWrapper.classList.add('hidden');
+      }
     }, 4500);
   }
 

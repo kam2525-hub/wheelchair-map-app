@@ -33,24 +33,24 @@
   <header class="absolute top-0 left-0 right-0 z-20 p-3 pt-safe flex flex-col gap-2 pointer-events-none">
     
     <!-- Top Bar: App Logo & Current Location Button -->
-    <div class="flex items-center justify-between pointer-events-auto bg-white/90 backdrop-blur-md px-3.5 py-2 rounded-2xl shadow-lg border border-slate-100">
-      <div class="flex items-center gap-2">
+    <div class="flex items-center justify-between pointer-events-auto bg-white/95 backdrop-blur-md px-3.5 py-2.5 rounded-2xl shadow-lg border border-slate-100">
+      <div class="flex items-center gap-2.5">
         <div class="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm font-bold text-sm">
           ♿
         </div>
         <div>
           <h1 class="text-sm font-extrabold text-slate-800 tracking-tight leading-none">WheeLife</h1>
-          <p class="text-[10px] text-slate-500 font-medium">バリアフリースロット探査</p>
+          <p class="text-[10px] text-slate-500 font-medium">車いすバリアフリーマップ</p>
         </div>
       </div>
 
       <!-- Quick Action: GPS Button -->
-      <button id="currentLocationBtn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 active:scale-95 transition text-xs font-semibold shadow-xs">
-        <svg class="w-3.5 h-3.5 animate-pulse text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <button id="currentLocationBtn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white transition text-xs font-bold shadow-md">
+        <svg class="w-3.5 h-3.5 text-white animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <circle cx="12" cy="12" r="3"></circle>
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
         </svg>
-        現在地を更新
+        <span>現在地を取得</span>
       </button>
     </div>
 
@@ -88,20 +88,30 @@
       </button>
     </div>
 
-    <!-- Notification Toast -->
-    <div class="pointer-events-none hidden transition-all flex justify-center">
-      <div id="statusToast" class="bg-slate-900/80 backdrop-blur-md text-white text-xs px-3.5 py-2 rounded-xl shadow-lg border border-slate-700 flex items-center gap-2 max-w-sm">
+    <!-- Status / Toast Notification Bar -->
+    <div id="toastWrapper" class="pointer-events-auto flex justify-center transition-all">
+      <div id="statusToast" class="bg-slate-900/90 backdrop-blur-md text-white text-xs px-3.5 py-2 rounded-xl shadow-xl border border-slate-700 flex items-center gap-2 max-w-sm">
         <div id="loadingIndicator" class="hidden">
           <svg class="animate-spin h-3.5 w-3.5 text-blue-400" viewBox="0 0 24 24" fill="none">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
         </div>
-        <span id="statusMessage" class="truncate font-medium">現在地を取得中...</span>
+        <span id="statusMessage" class="truncate font-medium">位置情報を準備中...</span>
       </div>
     </div>
 
   </header>
+
+  <!-- ==================== SEARCH THIS AREA BUTTON ==================== -->
+  <div class="absolute top-44 left-0 right-0 z-20 flex justify-center pointer-events-none">
+    <button id="searchAreaBtn" class="hidden pointer-events-auto bg-white/95 text-blue-700 hover:bg-blue-50 border border-blue-200 font-bold text-xs py-2 px-4 rounded-full shadow-lg flex items-center gap-1.5 transition-all transform active:scale-95">
+      <svg class="w-3.5 h-3.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <span>このエリアで再検索</span>
+    </button>
+  </div>
 
   <!-- ==================== BOTTOM SHEET (CARD LIST) ==================== -->
   <div id="bottomSheet" class="bottom-sheet sheet-half fixed left-0 right-0 bottom-0 z-30 bg-white/95 backdrop-blur-lg rounded-t-3xl shadow-2xl border-t border-slate-200/80 flex flex-col max-h-[85vh] h-full">
@@ -114,7 +124,7 @@
           <span class="text-xs font-bold text-slate-800">近くのバリアフリースポット</span>
           <span id="spotCountBadge" class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">--件</span>
         </div>
-        <span class="text-[11px] text-slate-400 font-medium">タップで展開/最小化</span>
+        <span class="text-[11px] text-slate-400 font-medium">タップで展開/縮小</span>
       </div>
     </div>
 

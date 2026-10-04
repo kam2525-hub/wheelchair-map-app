@@ -1,13 +1,12 @@
 // WheeLife - OpenStreetMap Overpass API 連携サービス
-// 車いすタグ (wheelchair=yes, limited, designated, toilets:wheelchair) をリアルタイム検索
+// 車いすタグ (wheelchair=yes, limited, designated, toilets:wheelchair) を高速検索
 
 class OsmService {
   constructor() {
     this.cache = new Map();
-    // 複数のOverpassミラーサーバー（冗長性・フォールバック対応）
     this.endpoints = [
       'https://overpass-api.de/api/interpreter',
-      'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+      'https://lz4.overpass-api.de/api/interpreter',
       'https://overpass.kumi.systems/api/interpreter'
     ];
     this.currentEndpointIndex = 0;
@@ -23,40 +22,37 @@ class OsmService {
   }
 
   /**
-   * 指定座標の周辺（radiusメートル）からバリアフリースポットを取得
-   * @param {number} lat 緯度
-   * @param {number} lng 経度
-   * @param {number} radius 半径(m) デフォルト1500m
-   * @returns {Promise<Array>} スポット配列
+   * 指定座標の周辺（radiusメートル）からバリアフリー・周辺スポットを取得
    */
   async fetchNearbyWheelchairSpots(lat, lng, radius = 1500) {
     const cacheKey = `${lat.toFixed(3)}_${lng.toFixed(3)}_${radius}`;
     if (this.cache.has(cacheKey)) {
-      console.log('[OSM] Returning cached spots');
       return this.cache.get(cacheKey);
     }
 
-    // Overpass QL クエリ作成
-    // 飲食店、遊び/レジャー、トイレで wheelchair タグまたはトイレタグがついたものを抽出
+    // 日本国内の実態に合わせた柔軟なクエリ
+    // 1. 車いす対応トイレ / 公衆トイレ
+    // 2. 飲食店 (カフェ、ファストフード、一般飲食店)
+    // 3. レジャー・商業施設・公園
     const query = `
-      [out:json][timeout:15];
+      [out:json][timeout:10];
       (
-        // ① 車いす対応トイレ (単体トイレ)
         node["amenity"="toilets"](around:${radius},${lat},${lng});
         way["amenity"="toilets"](around:${radius},${lat},${lng});
 
-        // ② 飲食店 (車いす対応、または一般飲食店)
-        node["amenity"~"restaurant|cafe|fast_food|bar|pub"]["wheelchair"](around:${radius},${lat},${lng});
-        way["amenity"~"restaurant|cafe|fast_food|bar|pub"]["wheelchair"](around:${radius},${lat},${lng});
+        node["amenity"~"restaurant|cafe|fast_food"](around:${radius},${lat},${lng});
+        way["amenity"~"restaurant|cafe|fast_food"](around:${radius},${lat},${lng});
 
-        // ③ 遊ぶ場所・レジャー施設
-        node["leisure"~"park|cinema|pitch|bowling_alley|playground|amusement_arcade"](around:${radius},${lat},${lng});
-        way["leisure"~"park|cinema|pitch|bowling_alley|playground|amusement_arcade"](around:${radius},${lat},${lng});
-        node["tourism"~"museum|zoo|aquarium|theme_park|attraction|gallery"](around:${radius},${lat},${lng});
-        way["tourism"~"museum|zoo|aquarium|theme_park|attraction|gallery"](around:${radius},${lat},${lng});
+        node["leisure"~"park|cinema|pitch|playground"](around:${radius},${lat},${lng});
+        node["tourism"~"museum|zoo|aquarium|theme_park|attraction"](around:${radius},${lat},${lng});
+        node["wheelchair"="yes"](around:${radius},${lat},${lng});
       );
-      out center 80;
+      out center 60;
     `;
+
+    // 8秒でタイムアウトするAbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     try {
       const response = await fetch(this.getEndpoint(), {
@@ -64,8 +60,11 @@ class OsmService {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
         },
-        body: 'data=' + encodeURIComponent(query)
+        body: 'data=' + encodeURIComponent(query),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`Overpass HTTP error: ${response.status}`);
@@ -77,15 +76,15 @@ class OsmService {
       this.cache.set(cacheKey, parsedSpots);
       return parsedSpots;
     } catch (error) {
-      console.warn('[OSM] Overpass API query failed or timed out:', error);
+      clearTimeout(timeoutId);
+      console.warn('[OSM] Overpass API query failed or timed out:', error.message);
       this.rotateEndpoint();
-      // フォールバックとして空配列（またはプリセットデータとマージして利用）
       return [];
     }
   }
 
   /**
-   * Overpassの要素配列をアプリ共通のSpot形式に変換
+   * Overpass要素をSpot形式に変換
    */
   parseOverpassElements(elements, userLat, userLng) {
     const results = [];
@@ -110,7 +109,7 @@ class OsmService {
       } else if (tags.amenity && ['restaurant', 'cafe', 'fast_food', 'bar', 'pub'].includes(tags.amenity)) {
         category = 'food';
         categoryName = tags.cuisine ? `${tags.cuisine}・飲食` : (tags.amenity === 'cafe' ? 'カフェ' : '飲食店');
-        if (!name) name = tags.brand || 'バリアフリー飲食店';
+        if (!name) name = tags.brand || '飲食店';
       } else {
         category = 'play';
         if (tags.tourism === 'museum') categoryName = '博物館・美術館';
@@ -126,7 +125,6 @@ class OsmService {
       if (seenNames.has(spotKey) && name !== '多機能トイレ') continue;
       seenNames.add(spotKey);
 
-      // 車いすアクセシビリティ情報の抽出
       const wheelchairVal = tags.wheelchair || (tags['toilets:wheelchair'] === 'yes' ? 'yes' : 'unknown');
       const hasWheelchairToilet = tags['toilets:wheelchair'] === 'yes' || tags.wheelchair === 'yes' || category === 'toilet';
       const hasElevator = tags.elevator === 'yes' || tags['level:elevator'] === 'yes';
@@ -149,7 +147,7 @@ class OsmService {
         accessibility: {
           hasElevator: hasElevator,
           hasRamp: hasRamp,
-          hasStepFreeAccess: wheelchairVal === 'yes',
+          hasStepFreeAccess: wheelchairVal === 'yes' || hasRamp,
           hasWheelchairToilet: hasWheelchairToilet,
           hasOstomate: hasOstomate,
           hasBabyChange: hasBabyChange,
