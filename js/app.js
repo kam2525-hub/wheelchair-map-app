@@ -1,21 +1,21 @@
 // WheeLife - Main Application Logic
-// 状態管理、UIバインディング、現在地取得、イベント処理
+// 厳格な検証ポリシー：車いす対応が明記されているスポットのみを扱い、推測は行いません。
 
 (function () {
   'use strict';
 
   // --- アプリケーション状態 (State) ---
   const state = {
-    userLat: 35.681236, // デフォルト: 東京駅
+    userLat: 35.681236,
     userLng: 139.767125,
     userAccuracy: 50,
     hasRealLocation: false,
-    activeCategory: 'all', // 'all' | 'food' | 'play' | 'toilet'
+    activeCategory: 'all',
     searchQuery: '',
     spots: [],
     filteredSpots: [],
     selectedSpot: null,
-    sheetState: 'half', // 'collapsed' | 'half' | 'expanded'
+    sheetState: 'half',
     isLoading: false,
     lastSearchedCenter: null
   };
@@ -50,11 +50,9 @@
     initEventListeners();
     initServiceWorker();
 
-    // 起動時の初期プリセットデータ設定
     updateSpotsWithDistance(state.userLat, state.userLng);
     filterAndRender();
 
-    // 起動時に現在地取得を開始
     requestCurrentLocation(false);
   });
 
@@ -63,18 +61,16 @@
     mapController.init(state.userLat, state.userLng, 15);
     mapController.setUserLocation(state.userLat, state.userLng, state.userAccuracy);
 
-    // ピンタップ時のコールバック
     mapController.onSpotSelect((spot) => {
       if (spot) {
         openSpotDetail(spot);
       }
     });
 
-    // 地図移動時に「このエリアで再検索」を表示
     mapController.onMapMove((lat, lng) => {
       if (state.lastSearchedCenter) {
         const dist = window.calculateDistanceKm(state.lastSearchedCenter.lat, state.lastSearchedCenter.lng, lat, lng);
-        if (dist > 0.4) {
+        if (dist > 0.3) {
           elements.searchAreaBtn.classList.remove('hidden');
         }
       } else {
@@ -86,7 +82,7 @@
   function initServiceWorker() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').then((reg) => {
-        console.log('[App] PWA Service Worker registered:', reg.scope);
+        console.log('[App] PWA SW registered:', reg.scope);
       }).catch((err) => {
         console.warn('[App] SW registration failed:', err);
       });
@@ -95,7 +91,6 @@
 
   // --- イベントリスナー ---
   function initEventListeners() {
-    // カテゴリフィルター切り替え
     elements.categoryFilterGroup.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-category]');
       if (!btn) return;
@@ -103,14 +98,12 @@
       setCategory(cat);
     });
 
-    // 検索入力
     elements.searchInput.addEventListener('input', (e) => {
       state.searchQuery = e.target.value.trim().toLowerCase();
       elements.clearSearchBtn.classList.toggle('hidden', state.searchQuery === '');
       filterAndRender();
     });
 
-    // 検索クリア
     elements.clearSearchBtn.addEventListener('click', () => {
       elements.searchInput.value = '';
       state.searchQuery = '';
@@ -118,32 +111,27 @@
       filterAndRender();
     });
 
-    // 現在地ボタン
     elements.currentLocationBtn.addEventListener('click', () => {
       requestCurrentLocation(true);
     });
 
-    // このエリアで再検索ボタン
     elements.searchAreaBtn.addEventListener('click', () => {
       elements.searchAreaBtn.classList.add('hidden');
       const center = mapController.getCenter();
       state.userLat = center.lat;
       state.userLng = center.lng;
       state.lastSearchedCenter = center;
-      mapController.setUserLocation(center.lat, center.lng, 100);
+      mapController.setUserLocation(center.lat, center.lng, 80);
       fetchNearbySpots(center.lat, center.lng);
     });
 
-    // ボトムシートヘッダーのタップ（展開/折りたたみ切り替え）
     elements.sheetToggleBtn.addEventListener('click', () => {
       toggleSheetState();
     });
 
-    // モーダル閉じる
     elements.modalCloseBtn.addEventListener('click', closeSpotDetail);
     elements.modalBackdrop.addEventListener('click', closeSpotDetail);
 
-    // ESCキーでモーダル閉じ
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !elements.spotModal.classList.contains('hidden')) {
         closeSpotDetail();
@@ -151,7 +139,7 @@
     });
   }
 
-  // --- 現在地取得（2段階高速化＆フォールバック） ---
+  // --- 現在地取得 ---
   function requestCurrentLocation(isUserInitiated = false) {
     if (!navigator.geolocation) {
       showStatus('お使いのブラウザは現在地取得に対応していません', 'error');
@@ -160,7 +148,6 @@
 
     setLoading(true, '現在地を取得中...');
 
-    // 成功時共通ハンドラ
     const handleLocationSuccess = (pos) => {
       const lat = pos.coords.latitude;
       const lng = pos.coords.longitude;
@@ -176,27 +163,22 @@
       mapController.panTo(lat, lng, 16);
       elements.searchAreaBtn.classList.add('hidden');
 
-      showStatus(`現在地を取得しました（誤差約±${Math.round(accuracy)}m）`, 'success');
+      showStatus(`現在地を取得（精度±${Math.round(accuracy)}m）。確証データを検索中...`, 'success');
 
-      // 周辺の車いす対応スポットを検索
       fetchNearbySpots(lat, lng);
     };
 
-    // まずは高速レスポンス（enableHighAccuracy: false）で大まかな位置を瞬時に取得
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         handleLocationSuccess(pos);
-
-        // その後、バックグラウンドで高精度GPS情報を取得して位置を補正
+        // バックグラウンドで高精度GPS更新
         navigator.geolocation.getCurrentPosition(
           (highAccPos) => {
             if (highAccPos.coords.accuracy < pos.coords.accuracy) {
               handleLocationSuccess(highAccPos);
             }
           },
-          (highAccErr) => {
-            console.log('[GPS High Accuracy Note] Fallback kept:', highAccErr.message);
-          },
+          () => {},
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
       },
@@ -204,12 +186,12 @@
         setLoading(false);
         console.warn('[Geolocation error]', err);
         let errorMsg = '現在地を取得できませんでした。';
-        if (err.code === 1) { // PERMISSION_DENIED
-          errorMsg = '位置情報の利用が許可されていません。ブラウザのアドレスバーから許可してください。';
-        } else if (err.code === 2) { // POSITION_UNAVAILABLE
-          errorMsg = '端末の位置情報を検出できませんでした。GPSが有効かご確認ください。';
-        } else if (err.code === 3) { // TIMEOUT
-          errorMsg = '位置情報の取得がタイムアウトしました。電波環境をご確認ください。';
+        if (err.code === 1) {
+          errorMsg = '位置情報の利用が許可されていません。ブラウザ設定をご確認ください。';
+        } else if (err.code === 2) {
+          errorMsg = '位置情報を検出できませんでした。';
+        } else if (err.code === 3) {
+          errorMsg = '位置情報の取得がタイムアウトしました。';
         }
         showStatus(errorMsg, 'warning');
       },
@@ -221,23 +203,26 @@
     );
   }
 
-  // --- 周辺スポット取得と統合 ---
+  // --- 周辺スポット取得（推測なし・明記データのみ） ---
   async function fetchNearbySpots(lat, lng) {
-    setLoading(true, '周辺のバリアフリースポットを検索中...');
+    setLoading(true, '車いす対応が明記されているスポットを検索中...');
     try {
       const osmSpots = await window.osmService.fetchNearbyWheelchairSpots(lat, lng, 2000);
       
-      // プリセットデータとOSMデータを結合し、距離を計算
       updateSpotsWithDistance(lat, lng, osmSpots);
       filterAndRender();
 
       const count = state.filteredSpots.length;
-      showStatus(`周辺に ${count} 件のバリアフリースポットが見つかりました`, 'success');
+      if (count > 0) {
+        showStatus(`周辺に車いす明記スポット ${count} 件を確認しました`, 'success');
+      } else {
+        showStatus('現在地周辺(2km)に車いすタグ明記のスポットが見つかりませんでした', 'info');
+      }
     } catch (e) {
-      console.error('[App] Spot fetch failed:', e);
+      console.error('[App] Spot fetch error:', e);
       updateSpotsWithDistance(lat, lng);
       filterAndRender();
-      showStatus('周辺データ取得中。内蔵スポットを表示しています', 'info');
+      showStatus('公式確認済みスポットを表示しています', 'info');
     } finally {
       setLoading(false);
     }
@@ -245,27 +230,23 @@
 
   // --- 距離計算とスポット更新 ---
   function updateSpotsWithDistance(userLat, userLng, additionalSpots = []) {
-    // OSMから取得できたスポット
     const osmList = additionalSpots || [];
 
-    // プリセットスポット（現在地から50km以上離れている場合は除外して、現在地周辺のノイズを防ぐ）
+    // プリセットデータ（現在地から50km以上離れている場合は除外）
     const validPresets = window.PRESET_SPOTS.filter(spot => {
       const dist = window.calculateDistanceKm(userLat, userLng, spot.lat, spot.lng);
       spot.distance = dist;
-      // OSMデータが0件の場合はサンプルとしてすべて表示、ある場合は50km以内のみ
       return osmList.length === 0 || dist < 50;
     });
 
     const all = [...osmList, ...validPresets];
     
-    // 重複除去 (ID基準)
     const uniqueMap = new Map();
     all.forEach(spot => {
       spot.distance = window.calculateDistanceKm(userLat, userLng, spot.lat, spot.lng);
       uniqueMap.set(spot.id, spot);
     });
 
-    // 距離の昇順でソート
     state.spots = Array.from(uniqueMap.values()).sort((a, b) => a.distance - b.distance);
   }
 
@@ -318,13 +299,15 @@
   function renderSpotList(spots) {
     if (spots.length === 0) {
       elements.spotList.innerHTML = `
-        <div class="flex flex-col items-center justify-center py-10 text-slate-400">
+        <div class="flex flex-col items-center justify-center py-10 px-4 text-center">
           <svg class="w-12 h-12 mb-2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
           </svg>
-          <p class="text-sm font-medium text-slate-600">周辺に該当スポットが見つかりません</p>
-          <p class="text-xs text-slate-400 mt-1">地図を移動して「このエリアで再検索」をお試しください</p>
+          <p class="text-sm font-bold text-slate-700">車いす対応が明記されたスポットが見つかりません</p>
+          <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+            安全のため推測データは表示していません。<br>
+            地図を最寄り駅や繁華街にスライドして「このエリアで再検索」をお試しください。
+          </p>
         </div>
       `;
       return;
@@ -341,17 +324,23 @@
         tagBg = 'bg-purple-50 text-purple-700 border-purple-200';
       }
 
-      const badges = [];
-      if (spot.wheelchair === 'yes') {
-        badges.push(`<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">車いすOK</span>`);
+      // 信頼度バッジ（推測なし・事実のみ）
+      let trustBadge = '';
+      if (spot.verificationStatus === 'verified') {
+        trustBadge = `<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">🟢 公式確認済</span>`;
+      } else {
+        trustBadge = `<span class="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">🔵 OSM明記</span>`;
       }
-      if (spot.accessibility.hasWheelchairToilet) {
-        badges.push(`<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">車いすトイレ</span>`);
+
+      // 設備バッジ（明記されているものだけ表示）
+      const badges = [trustBadge];
+      if (spot.accessibility.hasWheelchairToilet === true) {
+        badges.push(`<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">車いすトイレあり</span>`);
       }
-      if (spot.accessibility.hasElevator) {
+      if (spot.accessibility.hasElevator === true) {
         badges.push(`<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">EVあり</span>`);
       }
-      if (spot.accessibility.hasOstomate) {
+      if (spot.accessibility.hasOstomate === true) {
         badges.push(`<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700">オストメイト</span>`);
       }
 
@@ -414,12 +403,46 @@
 
     const googleMapUrl = `https://www.google.com/maps/dir/?api=1&destination=${spot.lat},${spot.lng}`;
 
+    // 各設備の判定ヘルパー（推測せず、true/false/nullを厳密に表示）
+    const renderFacilityItem = (label, statusVal) => {
+      let icon = '➖';
+      let statusText = '未確認（事前確認推奨）';
+      let textColor = 'text-slate-400';
+      let bgColor = 'bg-slate-50';
+
+      if (statusVal === true) {
+        icon = '✅';
+        statusText = '明記あり（利用可）';
+        textColor = 'font-bold text-slate-800';
+        bgColor = 'bg-emerald-50/50 border-emerald-100';
+      } else if (statusVal === false) {
+        icon = '❌';
+        statusText = 'なし（非対応）';
+        textColor = 'font-semibold text-rose-600';
+        bgColor = 'bg-rose-50/50 border-rose-100';
+      }
+
+      return `
+        <div class="flex items-center justify-between p-2.5 rounded-lg border border-slate-100 ${bgColor}">
+          <div class="flex items-center gap-2">
+            <span class="text-sm">${icon}</span>
+            <span class="text-xs font-medium text-slate-700">${label}</span>
+          </div>
+          <span class="text-[11px] ${textColor}">${statusText}</span>
+        </div>
+      `;
+    };
+
     elements.modalContent.innerHTML = `
       <div class="flex items-start gap-3 mb-3">
         <span class="text-3xl p-2 rounded-xl bg-slate-100 flex items-center justify-center">${iconEmoji}</span>
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${catClass}">${spot.categoryName}</span>
+            ${spot.verificationStatus === 'verified' 
+              ? `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">🟢 公式フロア情報確認済</span>`
+              : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-300">🔵 OSM車いすタグ明記</span>`
+            }
             <span class="text-xs font-bold text-blue-600">約 ${window.formatDistance(spot.distance)}</span>
           </div>
           <h2 class="text-base font-bold text-slate-900 mt-1">${spot.name}</h2>
@@ -427,55 +450,71 @@
         </div>
       </div>
 
-      <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 mb-4 space-y-2.5">
-        <h4 class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-          <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          バリアフリー・アクセシビリティ設備
+      <!-- 安全注意コールアウト -->
+      <div class="bg-amber-50 border border-amber-200/80 rounded-xl p-3 mb-3.5 flex items-start gap-2.5">
+        <svg class="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <p class="text-[11px] text-amber-800 leading-relaxed font-medium">
+          安全のため推測データは一切含めていません。車いすの全幅・段差昇降能力や当日の混雑状況により利用条件が異なる場合があるため、事前のご確認をおすすめします。
+        </p>
+      </div>
+
+      <!-- バリアフリー設備明記状況 -->
+      <div class="space-y-2 mb-4">
+        <h4 class="text-xs font-bold text-slate-700 flex items-center justify-between">
+          <span>バリアフリー設備・タグ明記状況</span>
+          <span class="text-[10px] font-normal text-slate-400">※未確認項目は推測していません</span>
         </h4>
-        <div class="grid grid-cols-2 gap-2 text-xs">
-          <div class="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-100">
-            <span class="text-base">${spot.accessibility.hasWheelchairToilet ? '✅' : '⚪'}</span>
-            <span class="${spot.accessibility.hasWheelchairToilet ? 'font-bold text-slate-800' : 'text-slate-400'}">車いす対応トイレ</span>
-          </div>
-          <div class="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-100">
-            <span class="text-base">${spot.accessibility.hasStepFreeAccess ? '✅' : '⚪'}</span>
-            <span class="${spot.accessibility.hasStepFreeAccess ? 'font-bold text-slate-800' : 'text-slate-400'}">段差なし / スロープ</span>
-          </div>
-          <div class="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-100">
-            <span class="text-base">${spot.accessibility.hasElevator ? '✅' : '⚪'}</span>
-            <span class="${spot.accessibility.hasElevator ? 'font-bold text-slate-800' : 'text-slate-400'}">エレベーター完備</span>
-          </div>
-          <div class="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-100">
-            <span class="text-base">${spot.accessibility.hasOstomate ? '✅' : '⚪'}</span>
-            <span class="${spot.accessibility.hasOstomate ? 'font-bold text-slate-800' : 'text-slate-400'}">オストメイト対応</span>
-          </div>
+        <div class="flex flex-col gap-1.5">
+          ${renderFacilityItem('車いす対応トイレ', spot.accessibility.hasWheelchairToilet)}
+          ${renderFacilityItem('段差なし / スロープ対応', spot.accessibility.hasStepFreeAccess)}
+          ${renderFacilityItem('エレベーター', spot.accessibility.hasElevator)}
+          ${renderFacilityItem('オストメイト設備', spot.accessibility.hasOstomate)}
         </div>
       </div>
 
+      <!-- 施設備考・出所 -->
       ${spot.description ? `
         <div class="mb-4">
-          <h4 class="text-xs font-semibold text-slate-600 mb-1">施設の特長・状況</h4>
-          <p class="text-xs text-slate-700 bg-blue-50/60 p-3 rounded-xl border border-blue-100/60 leading-relaxed">${spot.description}</p>
+          <h4 class="text-xs font-semibold text-slate-600 mb-1">登録情報・備考</h4>
+          <p class="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-200 leading-relaxed">${spot.description}</p>
         </div>
       ` : ''}
 
+      <!-- 営業時間・電話確認ボタン -->
       ${spot.openingHours || spot.phone ? `
         <div class="mb-4 space-y-1.5 text-xs text-slate-600">
           ${spot.openingHours ? `<div class="flex items-center gap-2"><span class="font-medium text-slate-400">🕒 営業時間:</span> <span>${spot.openingHours}</span></div>` : ''}
-          ${spot.phone ? `<div class="flex items-center gap-2"><span class="font-medium text-slate-400">📞 電話番号:</span> <a href="tel:${spot.phone}" class="text-blue-600 font-semibold underline">${spot.phone}</a></div>` : ''}
+          ${spot.phone ? `
+            <div class="flex items-center justify-between p-2.5 bg-blue-50/60 rounded-xl border border-blue-100">
+              <span class="font-medium text-slate-600">📞 事前確認用電話番号:</span>
+              <a href="tel:${spot.phone}" class="text-blue-700 font-bold underline text-xs flex items-center gap-1">
+                ${spot.phone}
+              </a>
+            </div>
+          ` : ''}
         </div>
       ` : ''}
 
+      <!-- アクションボタン群 -->
       <div class="flex items-center gap-2.5 mt-5">
+        ${spot.phone ? `
+          <a href="tel:${spot.phone}" 
+             class="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-3 rounded-xl shadow-md transition active:scale-98 text-xs">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/>
+            </svg>
+            電話で確認する
+          </a>
+        ` : ''}
         <a href="${googleMapUrl}" target="_blank" rel="noopener noreferrer"
-           class="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md transition active:scale-98 text-sm">
+           class="flex-1 flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-3 rounded-xl shadow-md transition active:scale-98 text-xs">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
           </svg>
-          Googleマップでルート案内
+          Googleマップ案内
         </a>
       </div>
     `;
