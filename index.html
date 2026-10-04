@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>WheeLife - 車いすアクセシブルマップ</title>
+  
+  <!-- PWA & Mobile Meta -->
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="WheeLife">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- Custom Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased overflow-hidden select-none">
+
+  <!-- ==================== MAP CONTAINER ==================== -->
+  <div id="map" class="absolute inset-0 z-0"></div>
+
+  <!-- ==================== TOP FLOATING CONTROLS ==================== -->
+  <header class="absolute top-0 left-0 right-0 z-20 p-3 pt-safe flex flex-col gap-2 pointer-events-none">
+    
+    <!-- Top Bar: App Logo & Current Location Button -->
+    <div class="flex items-center justify-between pointer-events-auto bg-white/90 backdrop-blur-md px-3.5 py-2 rounded-2xl shadow-lg border border-slate-100">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm font-bold text-sm">
+          ♿
+        </div>
+        <div>
+          <h1 class="text-sm font-extrabold text-slate-800 tracking-tight leading-none">WheeLife</h1>
+          <p class="text-[10px] text-slate-500 font-medium">バリアフリースロット探査</p>
+        </div>
+      </div>
+
+      <!-- Quick Action: GPS Button -->
+      <button id="currentLocationBtn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 active:scale-95 transition text-xs font-semibold shadow-xs">
+        <svg class="w-3.5 h-3.5 animate-pulse text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
+        </svg>
+        現在地を更新
+      </button>
+    </div>
+
+    <!-- Search Box -->
+    <div class="pointer-events-auto relative">
+      <div class="relative flex items-center shadow-md rounded-2xl bg-white border border-slate-100 overflow-hidden">
+        <span class="pl-3.5 pr-2 text-slate-400">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+        </span>
+        <input type="text" id="searchInput" placeholder="施設名、カフェ、トイレ、駅名で検索..." 
+               class="w-full py-2.5 pr-8 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none bg-transparent">
+        <button id="clearSearchBtn" class="hidden absolute right-3 text-slate-400 hover:text-slate-600 p-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Category Filter Pills -->
+    <div id="categoryFilters" class="pointer-events-auto flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+      <button data-category="all" class="flex items-center gap-1 px-3.5 py-1.5 rounded-full text-xs font-semibold shadow-sm bg-blue-600 text-white transition-all transform scale-105">
+        すべて
+      </button>
+      <button data-category="food" class="flex items-center gap-1 px-3.5 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 transition-all">
+        <span>🍽️</span> ご飯
+      </button>
+      <button data-category="play" class="flex items-center gap-1 px-3.5 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 transition-all">
+        <span>🎮</span> 遊ぶ場所
+      </button>
+      <button data-category="toilet" class="flex items-center gap-1 px-3.5 py-1.5 rounded-full text-xs font-medium bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 transition-all">
+        <span>🚻</span> トイレ
+      </button>
+    </div>
+
+    <!-- Notification Toast -->
+    <div class="pointer-events-none hidden transition-all flex justify-center">
+      <div id="statusToast" class="bg-slate-900/80 backdrop-blur-md text-white text-xs px-3.5 py-2 rounded-xl shadow-lg border border-slate-700 flex items-center gap-2 max-w-sm">
+        <div id="loadingIndicator" class="hidden">
+          <svg class="animate-spin h-3.5 w-3.5 text-blue-400" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </div>
+        <span id="statusMessage" class="truncate font-medium">現在地を取得中...</span>
+      </div>
+    </div>
+
+  </header>
+
+  <!-- ==================== BOTTOM SHEET (CARD LIST) ==================== -->
+  <div id="bottomSheet" class="bottom-sheet sheet-half fixed left-0 right-0 bottom-0 z-30 bg-white/95 backdrop-blur-lg rounded-t-3xl shadow-2xl border-t border-slate-200/80 flex flex-col max-h-[85vh] h-full">
+    
+    <!-- Sheet Drag Handle / Header -->
+    <div id="sheetToggleBtn" class="flex flex-col items-center pt-2.5 pb-2 px-4 cursor-pointer border-b border-slate-100 select-none">
+      <div class="w-10 h-1.5 bg-slate-300 rounded-full mb-2"></div>
+      <div class="w-full flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold text-slate-800">近くのバリアフリースポット</span>
+          <span id="spotCountBadge" class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full">--件</span>
+        </div>
+        <span class="text-[11px] text-slate-400 font-medium">タップで展開/最小化</span>
+      </div>
+    </div>
+
+    <!-- Scrollable Spots List -->
+    <div id="sheetContent" class="flex-1 overflow-y-auto p-3.5 space-y-2.5 custom-scrollbar pb-safe">
+      <div id="spotList" class="space-y-2.5 pb-10">
+        <!-- JSで動的にカードが挿入されます -->
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ==================== SPOT DETAIL MODAL ==================== -->
+  <div id="spotModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <!-- Backdrop Blur -->
+    <div id="modalBackdrop" class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"></div>
+    
+    <!-- Modal Card -->
+    <div id="modalContainer" class="relative z-10 w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh] modal-enter-active">
+      <!-- Modal Top Close Button -->
+      <button id="modalCloseBtn" class="absolute top-4 right-4 z-20 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition active:scale-95">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+
+      <!-- Modal Body -->
+      <div id="modalContent" class="p-5 overflow-y-auto custom-scrollbar">
+        <!-- JSで詳細情報が動的に生成されます -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== JAVASCRIPT MODULES ==================== -->
+  <script src="js/data.js"></script>
+  <script src="js/osmService.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/app.js"></script>
+
+</body>
+</html>

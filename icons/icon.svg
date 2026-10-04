@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#1e3a8a" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Background Rounded Squircle -->
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#grad)" filter="url(#shadow)"/>
+  
+  <!-- Inner Ring / Subtle Accent -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="white" stroke-opacity="0.15" stroke-width="8" stroke-dasharray="16 12"/>
+
+  <!-- Wheelchair Symbol in White -->
+  <g fill="white" transform="translate(40, 20)">
+    <!-- Head -->
+    <circle cx="240" cy="140" r="32"/>
+    <!-- Back & Spine -->
+    <path d="M216 186 C216 180, 222 174, 230 174 L276 174 C284 174, 290 180, 290 188 L286 270 L346 270 C356 270, 364 278, 364 288 C364 298, 356 306, 346 306 L270 306 C260 306, 252 298, 250 288 L246 210 L220 210 C210 210, 204 200, 208 190 Z"/>
+    <!-- Wheel Outer -->
+    <path d="M190 240 C146 240, 110 276, 110 320 C110 364, 146 400, 190 400 C234 400, 270 364, 270 320 L234 320 C234 344, 214 364, 190 364 C166 364, 146 344, 146 320 C146 296, 166 276, 190 276 L190 240 Z"/>
+    <!-- Footrest/Front support -->
+    <circle cx="340" cy="360" r="20"/>
+    <path d="M280 306 L332 350" stroke="white" stroke-width="14" stroke-linecap="round"/>
+  </g>
+
+  <!-- Accent Heart / Badge in Top Right -->
+  <g transform="translate(340, 80) scale(1.2)">
+    <circle cx="24" cy="24" r="28" fill="#10b981" filter="url(#shadow)"/>
+    <!-- Checkmark or Pin -->
+    <path d="M16 24 L22 30 L32 18" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+</svg>
